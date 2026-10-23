@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Camera Cast</string>
+    <string name="a11y_desc">ให้แอป Camera Cast แตะหน้าจอมือถือ (โฟกัส ปรับความสว่าง กดชัตเตอร์) ตามคำสั่งจากแท็บเล็ตที่จับคู่ด้วย PIN เท่านั้น</string>
+</resources>
