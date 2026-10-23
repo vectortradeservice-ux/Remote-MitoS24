@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -23,3 +26,10 @@ jobs:
         with:
           name: CameraCast-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish APK to release "latest"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk CameraCast.apk
+          gh release view latest >/dev/null 2>&1 || gh release create latest --title "Latest build" --notes "APK ที่บิลด์อัตโนมัติล่าสุด" --prerelease
+          gh release upload latest CameraCast.apk --clobber

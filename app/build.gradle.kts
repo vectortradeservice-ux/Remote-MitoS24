@@ -15,7 +15,20 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        create("fixed") {
+            // keystore คงที่ ทำให้ APK ทุกเวอร์ชันติดตั้งทับกันได้ (ไม่ต้องลบแอปเดิม)
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "cameracast"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixed")
+        }
         release {
             isMinifyEnabled = false
         }

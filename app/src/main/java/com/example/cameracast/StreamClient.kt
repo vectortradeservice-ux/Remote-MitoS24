@@ -20,6 +20,7 @@ class StreamClient(
     private val host: String,
     private val pin: Int,
     private val surface: Surface,
+    @Volatile private var rotation: Int,
     private val cb: Callback
 ) : Thread("stream-client") {
 
@@ -40,6 +41,9 @@ class StreamClient(
     private var outThread: Thread? = null
     private var pts = 0L
     private var waitKey = true
+    private var lastW = 0
+    private var lastH = 0
+    @Volatile private var restartDecoder = false
     private val sender = Executors.newSingleThreadExecutor()
 
     init {
@@ -93,7 +97,10 @@ class StreamClient(
 
     private fun startDecoder(w: Int, h: Int) {
         stopDecoder()
+        lastW = w
+        lastH = h
         val fmt = MediaFormat.createVideoFormat(mime, w, h).apply {
+            if (rotation != 0) setInteger(MediaFormat.KEY_ROTATION, rotation)
             setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 2 * 1024 * 1024)
             setInteger(MediaFormat.KEY_LOW_LATENCY, 1)                           // ไม่เก็บเฟรมไว้เรียง
             setInteger(MediaFormat.KEY_PRIORITY, 0)                              // real-time
@@ -133,6 +140,11 @@ class StreamClient(
     }
 
     private fun feed(data: ByteArray, len: Int) {
+        if (restartDecoder && lastW > 0) {
+            restartDecoder = false
+            startDecoder(lastW, lastH) // สร้างใหม่ด้วยค่า rotation ใหม่ แล้วรอเฟรม key
+            requestKeyFrame()
+        }
         val dec = decoder ?: return
         val key = data[0].toInt() == 1
         if (waitKey) {
@@ -177,9 +189,11 @@ class StreamClient(
             .putFloat(x1).putFloat(y1).putFloat(x2).putFloat(y2).putInt(ms).array()
     )
 
-    fun sendShutter(x: Float, y: Float) = sendBytes(
-        ByteBuffer.allocate(9).put(Protocol.C_SHUTTER).putFloat(x).putFloat(y).array()
-    )
+    /** หมุนภาพที่แสดง (0/90/180/270 องศาตามเข็ม) — decoder จะหมุนให้ตอนวาดลง Surface */
+    fun setRotation(deg: Int) {
+        rotation = deg
+        restartDecoder = true
+    }
 
     fun requestKeyFrame() = sendBytes(byteArrayOf(Protocol.C_KEYFRAME))
 

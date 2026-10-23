@@ -10,7 +10,6 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.view.Gravity
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.SurfaceHolder
 import android.view.View
@@ -26,9 +25,8 @@ import android.widget.Toast
 import kotlin.math.hypot
 
 /**
- * ฝั่งแท็บเล็ต: แสดงภาพจากมือถือเต็มจอ
- *  - แตะบนภาพ = โฟกัส, ลาก (เริ่มที่ไอคอนดวงอาทิตย์/แถบความสว่าง) = ปรับความสว่าง, กดค้าง = ล็อก AE/AF
- *  - ปุ่มชัตเตอร์ใหญ่แยกต่างหากด้านขวา (ถ่ายภาพ หรือเริ่ม/หยุดอัดวิดีโอ ตามโหมดของแอปกล้อง)
+ * ฝั่งแท็บเล็ต: แสดงภาพจากมือถือเต็มจอ แล้ว "แตะ/ลาก/กดค้าง" บนภาพได้เหมือนแตะมือถือโดยตรง
+ * (รวมถึงปุ่มชัตเตอร์ของแอปกล้อง) มีปุ่มเล็กมุมขวาบนสำหรับหมุนภาพและตัดการเชื่อมต่อ
  */
 class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callback {
 
@@ -38,15 +36,14 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
     private lateinit var video: FitSurfaceView
     private lateinit var etIp: EditText
     private lateinit var etPin: EditText
-    private lateinit var btnCal: Button
 
     private var client: StreamClient? = null
     private var pendingConnect = false
     private var pendingHost = ""
     private var pendingPin = 0
-    private var calibrating = false
-    private var shutX = -1f
-    private var shutY = -1f
+    private var rotation = 0          // 0/90/180/270 (ตามเข็ม)
+    private var vidW = 0
+    private var vidH = 0
     private var wifiLock: WifiManager.WifiLock? = null
     private val ui = Handler(Looper.getMainLooper())
 
@@ -54,8 +51,7 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         prefs = getSharedPreferences("cc", MODE_PRIVATE)
-        shutX = prefs.getFloat("shutX", -1f)
-        shutY = prefs.getFloat("shutY", -1f)
+        rotation = prefs.getInt("rotation", 0)
 
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         form = buildForm()
@@ -111,7 +107,7 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(pad * 3, pad, pad * 3, pad)
+            setPadding(pad * 2, pad, pad * 2, pad)
             setBackgroundColor(Ui.BG)
         }
         box.addView(Ui.text(this, "เชื่อมต่อกับมือถือ", 24f, true))
@@ -148,18 +144,13 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
     }
 
     private fun buildMonitor(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.BLACK)
-        }
+        val frame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
 
-        val frame = FrameLayout(this)
         video = FitSurfaceView(this)
         video.holder.addCallback(this)
         frame.addView(video, FrameLayout.LayoutParams(Ui.MATCH, Ui.MATCH, Gravity.CENTER))
-        row.addView(frame, LinearLayout.LayoutParams(0, Ui.MATCH, 1f))
 
-        // --- แตะ/ลากบนภาพ ---
+        // --- แตะ/ลาก/กดค้างบนภาพ -> ส่งไปทำบนมือถือ ---
         val slop = ViewConfiguration.get(this).scaledTouchSlop * 1.5f
         var dx = 0f
         var dy = 0f
@@ -168,7 +159,10 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
         video.setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    dx = e.x; dy = e.y; t0 = e.eventTime; moved = false
+                    dx = e.x
+                    dy = e.y
+                    t0 = e.eventTime
+                    moved = false
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (hypot(e.x - dx, e.y - dy) > slop) moved = true
@@ -176,19 +170,10 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
                 MotionEvent.ACTION_UP -> {
                     val w = v.width.toFloat()
                     val h = v.height.toFloat()
-                    val x1 = (dx / w).coerceIn(0f, 1f)
-                    val y1 = (dy / h).coerceIn(0f, 1f)
-                    val x2 = (e.x / w).coerceIn(0f, 1f)
-                    val y2 = (e.y / h).coerceIn(0f, 1f)
+                    val (x1, y1) = mapToPhone((dx / w).coerceIn(0f, 1f), (dy / h).coerceIn(0f, 1f))
+                    val (x2, y2) = mapToPhone((e.x / w).coerceIn(0f, 1f), (e.y / h).coerceIn(0f, 1f))
                     val dur = (e.eventTime - t0).toInt()
-                    if (calibrating) {
-                        calibrating = false
-                        shutX = x1
-                        shutY = y1
-                        prefs.edit().putFloat("shutX", shutX).putFloat("shutY", shutY).apply()
-                        btnCal.text = "ตั้งตำแหน่งชัตเตอร์ ✓"
-                        toast("บันทึกตำแหน่งปุ่มชัตเตอร์แล้ว")
-                    } else if (!moved && dur < 350) {
+                    if (!moved && dur < 350) {
                         client?.sendTap(x1, y1)
                     } else {
                         client?.sendSwipe(x1, y1, x2, y2, dur)
@@ -198,57 +183,62 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
             true
         }
 
-        // --- แผงควบคุมด้านขวา ---
-        val pad = Ui.dp(this, 16)
-        val panel = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(pad, pad, pad, pad)
-            setBackgroundColor(Ui.PANEL)
-        }
-        val size = Ui.dp(this, 150)
-        val shutter = Button(this).apply {
-            text = "ถ่าย / REC"
-            textSize = 18f
-            isAllCaps = false
-            setTextColor(Color.BLACK)
+        // --- ปุ่มเล็กมุมขวาบน: หมุนภาพ / ตัดการเชื่อมต่อ ---
+        val size = Ui.dp(this, 48)
+        val margin = Ui.dp(this, 12)
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        bar.addView(roundButton("↻", size) { rotateView() })
+        bar.addView(
+            roundButton("✕", size) { disconnect() },
+            LinearLayout.LayoutParams(size, size).apply { leftMargin = margin }
+        )
+        frame.addView(
+            bar,
+            FrameLayout.LayoutParams(Ui.WRAP, Ui.WRAP, Gravity.TOP or Gravity.END).apply {
+                setMargins(margin, margin, margin, margin)
+            }
+        )
+        return frame
+    }
+
+    private fun roundButton(label: String, size: Int, onClick: () -> Unit): Button =
+        Button(this).apply {
+            text = label
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, 0)
+            minWidth = 0
+            minHeight = 0
+            alpha = 0.55f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(Color.WHITE)
-                setStroke(Ui.dp(this@ReceiverActivity, 6), Color.rgb(220, 40, 40))
+                setColor(Color.parseColor("#99000000"))
+                setStroke(Ui.dp(this@ReceiverActivity, 1), Color.parseColor("#66FFFFFF"))
             }
-            // ส่งคำสั่งตอน "แตะลง" เพื่อให้ตอบสนองเร็วที่สุด
-            setOnTouchListener { v, e ->
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> {
-                        v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                        v.alpha = 0.6f
-                        client?.sendShutter(shutX, shutY)
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> v.alpha = 1f
-                }
-                true
-            }
+            layoutParams = LinearLayout.LayoutParams(size, size)
+            setOnClickListener { onClick() }
         }
-        panel.addView(shutter, Ui.lp(size, size))
 
-        btnCal = Ui.button(this, if (shutX >= 0f) "ตั้งตำแหน่งชัตเตอร์ ✓" else "ตั้งตำแหน่งชัตเตอร์") {
-            calibrating = true
-            toast("แตะที่ปุ่มชัตเตอร์บนภาพ (กดค้างปุ่มนี้เพื่อกลับไปโหมดหาปุ่มอัตโนมัติ)")
-        }
-        btnCal.setOnLongClickListener {
-            shutX = -1f
-            shutY = -1f
-            prefs.edit().remove("shutX").remove("shutY").apply()
-            btnCal.text = "ตั้งตำแหน่งชัตเตอร์"
-            toast("ใช้โหมดหาปุ่มชัตเตอร์อัตโนมัติ")
-            true
-        }
-        panel.addView(btnCal, Ui.lp(Ui.MATCH, Ui.WRAP, Ui.dp(this, 32)))
-        panel.addView(Ui.button(this, "ตัดการเชื่อมต่อ") { disconnect() }, Ui.lp(Ui.MATCH, Ui.WRAP, Ui.dp(this, 8)))
+    // ---------------------------------------------------------------- rotation
 
-        row.addView(panel, LinearLayout.LayoutParams(Ui.dp(this, 220), Ui.MATCH))
-        return row
+    /** แปลงพิกัดบนภาพที่ถูกหมุนแล้ว (0..1) กลับเป็นพิกัดบนหน้าจอมือถือ */
+    private fun mapToPhone(u: Float, v: Float): Pair<Float, Float> = when (rotation) {
+        90 -> Pair(v, 1f - u)
+        180 -> Pair(1f - u, 1f - v)
+        270 -> Pair(1f - v, u)
+        else -> Pair(u, v)
+    }
+
+    private fun rotateView() {
+        rotation = (rotation + 90) % 360
+        prefs.edit().putInt("rotation", rotation).apply()
+        client?.setRotation(rotation)
+        updateVideoSize()
+    }
+
+    private fun updateVideoSize() {
+        if (vidW == 0 || vidH == 0) return
+        if (rotation == 90 || rotation == 270) video.setVideoSize(vidH, vidW) else video.setVideoSize(vidW, vidH)
     }
 
     // ---------------------------------------------------------------- connection
@@ -273,7 +263,7 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
         if (!pendingConnect) return
         pendingConnect = false
         client?.close()
-        client = StreamClient(pendingHost, pendingPin, video.holder.surface, this).also { it.start() }
+        client = StreamClient(pendingHost, pendingPin, video.holder.surface, rotation, this).also { it.start() }
     }
 
     private fun disconnect() {
@@ -297,7 +287,11 @@ class ReceiverActivity : Activity(), SurfaceHolder.Callback, StreamClient.Callba
 
     // StreamClient.Callback (เรียกจาก thread เครือข่าย)
     override fun onSize(w: Int, h: Int) {
-        ui.post { video.setVideoSize(w, h) }
+        ui.post {
+            vidW = w
+            vidH = h
+            updateVideoSize()
+        }
     }
 
     override fun onMessage(text: String) {

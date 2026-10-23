@@ -250,15 +250,6 @@ class ScreenCastService : Service() {
                     val ms = din.readInt()
                     withControl { it.swipe(x1, y1, x2, y2, ms) }
                 }
-                Protocol.C_SHUTTER -> {
-                    val x = din.readFloat()
-                    val y = din.readFloat()
-                    withControl {
-                        if (!it.shutter(x, y)) {
-                            sendMessage("หาปุ่มชัตเตอร์ไม่เจอ: กด \"ตั้งตำแหน่งชัตเตอร์\" แล้วแตะที่ปุ่มชัตเตอร์บนภาพ")
-                        }
-                    }
-                }
                 Protocol.C_KEYFRAME -> {
                     needKey = true
                     requestKeyFrame()

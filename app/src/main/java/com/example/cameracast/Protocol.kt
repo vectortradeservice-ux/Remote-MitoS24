@@ -13,7 +13,6 @@ package com.example.cameracast
  * แท็บเล็ต -> มือถือ : [type:1][fields...]
  *   C_TAP      : float x, float y            (0..1 สัมพันธ์กับหน้าจอ)
  *   C_SWIPE    : float x1,y1,x2,y2, int ms   (ลาก / กดค้าง)
- *   C_SHUTTER  : float x, float y            (ค่าติดลบ = ให้มือถือหาปุ่มเอง)
  *   C_KEYFRAME : (ไม่มีข้อมูล)
  */
 object Protocol {
@@ -26,6 +25,5 @@ object Protocol {
 
     const val C_TAP: Byte = 1
     const val C_SWIPE: Byte = 2
-    const val C_SHUTTER: Byte = 3
     const val C_KEYFRAME: Byte = 4
 }
